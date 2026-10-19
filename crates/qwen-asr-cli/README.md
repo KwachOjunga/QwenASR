@@ -31,11 +31,17 @@ qwen-asr -d qwen3-asr-0.6b -i audio.wav
 # Streaming mode
 qwen-asr -d qwen3-asr-0.6b -i audio.wav --stream
 
-# Live capture (macOS)
+# Live capture from the default input device (macOS and Linux)
+qwen-asr -d qwen3-asr-0.6b --live --stream
+
+# Select an input device by name
 qwen-asr -d qwen3-asr-0.6b --live --stream --device "BlackHole 2ch"
 
-# VAD live mode (macOS)
-qwen-asr -d qwen3-asr-0.6b --live --vad --device "BlackHole 2ch"
+# VAD live mode (macOS and Linux)
+qwen-asr -d qwen3-asr-0.6b --live --vad
+
+# List audio input devices
+qwen-asr --list-devices
 
 # Forced alignment
 qwen-asr -d qwen3-aligner-0.6b -i audio.wav --align "Hello world"

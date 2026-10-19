@@ -1,17 +1,20 @@
 mod download;
 #[cfg(target_os = "macos")]
 mod live_capture;
+#[cfg(target_os = "linux")]
+#[path = "live_capture_linux.rs"]
+mod live_capture;
 
 use config::*;
 use context::QwenCtx;
 use qwen_asr::{align, audio, config, context, kernels, subtitle, transcribe};
 
 use std::io::Write;
-// Only the macOS live-capture loop uses these.
+use std::sync::atomic::Ordering;
 use std::sync::atomic::AtomicUsize;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::sync::atomic::AtomicBool;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::sync::Arc;
 
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -116,7 +119,7 @@ fn usage(prog: &str) {
     );
     eprintln!("                in parallel (plain-text stdout only).");
     eprintln!("  --stdin       Read audio from stdin (auto-detect WAV or raw s16le 16kHz mono)");
-    eprintln!("\nLive capture (macOS only):");
+    eprintln!("\nLive capture (macOS and Linux):");
     eprintln!("  --live                      Capture from audio input device in real time");
     eprintln!("  --device <name>             Input device name (default: system default)");
     eprintln!("  --list-devices              List available audio input devices and exit");
@@ -175,14 +178,13 @@ fn main() {
 
     // Handle --list-devices (no model needed)
     if args.iter().any(|a| a == "--list-devices") {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             live_capture::print_devices();
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            eprintln!("--list-devices is only supported on macOS.");
-            eprintln!("On Linux, use: arecord -l");
+            eprintln!("--list-devices is only supported on macOS and Linux.");
         }
         return;
     }
@@ -193,16 +195,14 @@ fn main() {
     let mut verbosity = 1i32;
     let mut use_stdin = false;
     let mut live_mode = false;
-    // Only consumed by the macOS live-capture path; the flags are still
-    // parsed on other platforms (--live errors out below), so gate the
-    // bindings and their assignments to match.
-    #[cfg(target_os = "macos")]
+    // Only consumed by live-capture platforms.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut device_name: Option<String> = None;
     let mut n_threads = 0i32;
     let mut segment_sec: f32 = -1.0;
     let mut search_sec: f32 = -1.0;
     let mut stream_mode = false;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut vad_mode = false;
     let mut stream_max_new_tokens: i32 = -1;
     let mut stream_chunk_sec: f32 = -1.0;
@@ -257,7 +257,7 @@ fn main() {
                 stream_mode = true;
             }
             "--vad" => {
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 {
                     vad_mode = true;
                 }
@@ -351,7 +351,7 @@ fn main() {
             }
             "--device" => {
                 i += 1;
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 {
                     device_name = args.get(i).cloned();
                 }
@@ -628,14 +628,13 @@ fn main() {
 
     // Live capture mode
     if live_mode {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            eprintln!("Error: --live is only supported on macOS.");
-            eprintln!("On Linux, pipe audio via: arecord -f S16_LE -r 16000 -c 1 | qwen-asr -d <model> --stdin");
+            eprintln!("Error: --live is only supported on macOS and Linux.");
             std::process::exit(1);
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             run_live_capture(
                 &mut ctx,
@@ -965,10 +964,10 @@ fn main() {
 }
 
 // ========================================================================
-// Live Capture Loop (macOS only)
+// Live Capture Loop
 // ========================================================================
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn run_live_capture(
     ctx: &mut QwenCtx,
     device_name: Option<&str>,
