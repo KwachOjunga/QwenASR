@@ -1,7 +1,7 @@
 //! Linux live audio capture via CPAL.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BuildStreamError, Device, SampleFormat, Stream, StreamConfig};
+use cpal::{Device, Error, SampleFormat, Stream, StreamConfig};
 use std::sync::mpsc;
 
 /// An audio input device.
@@ -21,7 +21,10 @@ fn input_devices() -> Vec<(Device, AudioDevice)> {
         .enumerate()
         .filter_map(|(id, device)| {
             let config = device.default_input_config().ok()?;
-            let name = device.name().unwrap_or_else(|_| format!("Input device {id}"));
+            let name = device
+                .description()
+                .map(|description| description.name().to_owned())
+                .unwrap_or_else(|_| format!("Input device {id}"));
             let info = AudioDevice {
                 id,
                 name,
@@ -48,7 +51,7 @@ pub fn find_device_by_name(name: &str) -> Option<AudioDevice> {
 /// Get the default input device's enumerated ID.
 pub fn default_input_device() -> Option<usize> {
     let default = cpal::default_host().default_input_device()?;
-    let default_name = default.name().ok()?;
+    let default_name = default.description().ok()?.name().to_owned();
     list_input_devices()
         .into_iter()
         .find(|device| device.name == default_name)
@@ -86,11 +89,11 @@ pub struct CaptureHandle {
 
 fn build_stream<T>(
     device: &Device,
-    config: &StreamConfig,
+    config: StreamConfig,
     channels: usize,
     tx: mpsc::Sender<Vec<f32>>,
     convert: fn(T) -> f32,
-) -> Result<Stream, BuildStreamError>
+) -> Result<Stream, Error>
 where
     T: cpal::SizedSample + Copy + Send + 'static,
 {
@@ -100,8 +103,7 @@ where
             let samples = data
                 .chunks(channels)
                 .map(|frame| {
-                    frame.iter().map(|&sample| convert(sample)).sum::<f32>()
-                        / channels as f32
+                    frame.iter().map(|&sample| convert(sample)).sum::<f32>() / channels as f32
                 })
                 .collect();
             let _ = tx.send(samples);
@@ -122,26 +124,20 @@ pub fn start_capture(
     let supported = device
         .default_input_config()
         .map_err(|error| format!("Cannot get default input configuration: {error}"))?;
-    let sample_rate = f64::from(supported.sample_rate().0);
+    let sample_rate = f64::from(supported.sample_rate());
     let channels = usize::from(supported.channels());
     let config: StreamConfig = supported.clone().into();
     let sample_format = supported.sample_format();
     let (tx, rx) = mpsc::channel();
 
     let stream = match sample_format {
-        SampleFormat::F32 => {
-            build_stream(&device, &config, channels, tx, |sample: f32| sample)
-        }
-        SampleFormat::I16 => {
-            build_stream(&device, &config, channels, tx, |sample: i16| {
-                f32::from(sample) / 32768.0
-            })
-        }
-        SampleFormat::U16 => {
-            build_stream(&device, &config, channels, tx, |sample: u16| {
-                f32::from(sample) / 32768.0 - 1.0
-            })
-        }
+        SampleFormat::F32 => build_stream(&device, config, channels, tx, |sample: f32| sample),
+        SampleFormat::I16 => build_stream(&device, config, channels, tx, |sample: i16| {
+            f32::from(sample) / 32768.0
+        }),
+        SampleFormat::U16 => build_stream(&device, config, channels, tx, |sample: u16| {
+            f32::from(sample) / 32768.0 - 1.0
+        }),
         format => return Err(format!("Unsupported input sample format: {format:?}")),
     }
     .map_err(|error| format!("Cannot build audio input stream: {error}"))?;
